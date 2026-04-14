@@ -159,6 +159,26 @@ async def trainer(interaction: discord.Interaction, name: str):
             view=view
         )
 
+@bot.tree.command(name="route", description="Look up all trainers on a route or location")
+@app_commands.describe(location="Route or location name")
+async def route(interaction: discord.Interaction, location: str):
+    results = await fetch(f"{API_URL}/location?name={location}")
+
+    if not results:
+        await interaction.response.send_message(f"No trainers found at `{location}`.", ephemeral=True)
+        return
+
+    if len(results) == 1:
+        data = await fetch(f"{API_URL}/encounter/{results[0]['encounter_id']}")
+        embed = build_encounter_embed(data)
+        await interaction.response.send_message(embed=embed)
+    else:
+        view = EncounterView(results)
+        await interaction.response.send_message(
+            f"Found {len(results)} encounters at `{location}` — pick one:",
+            view=view
+        )
+
 @bot.event
 async def on_ready():
     await bot.tree.sync()
