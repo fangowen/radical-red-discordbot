@@ -1,0 +1,34 @@
+[
+  {
+    "name": "RIVAL",
+    "trainer_class": "Rival",
+    "starter": null,
+    "encounters": [
+      {
+        "location": "Route 22",
+        "encounter_number": 1,
+        "starter_variant": "water",
+        "team_variant": null,
+        "level_cap": 16,
+        "team": [
+          {
+            "pokemon": "Snubull",
+            "level": 5,
+            "nature": "Adamant",
+            "ability": "Intimidate",
+            "item": "Muscle Band",
+            "moves": ["Ice Punch", "Covet", "Thunder Wave", "Fire Fang"],
+            "stats": {
+              "hp": 60,
+              "attack": 80,
+              "defense": 50,
+              "sp_attack": 40,
+              "sp_defense": 40,
+              "speed": 30
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
