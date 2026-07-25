@@ -1,9 +1,14 @@
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import joinedload
 from db.session import SessionLocal
-from db.models import Pokemon, Trainer, TrainerEncounter, TrainerPokemon, TrainerPokemonMove
+from db.models import Pokemon, Trainer, TrainerEncounter, TrainerPokemon
 from cache.redis import get_cache, set_cache
-app = FastAPI()
+
+app = FastAPI(title="Radical Red Bot API")
+
+
+def normalize_query(value: str) -> str:
+    return value.strip().lower()
 
 def get_db():
     db = SessionLocal()
@@ -16,14 +21,21 @@ def get_db():
 #search trainers by name
 @app.get("/trainer")
 def search_trainers(name: str, db=Depends(get_db)):
-    cache_key = f"trainer:search:{name.lower()}"
+    query = normalize_query(name)
+    if not query:
+        raise HTTPException(status_code=400, detail="Search name is required")
+
+    cache_key = f"trainer:search:{query}"
     cached = get_cache(cache_key)
     if cached:
         return cached
 
-    results = db.query(Trainer).filter(
-        Trainer.name.ilike(f"%{name}%")
-    ).all()
+    results = (
+        db.query(Trainer)
+        .options(joinedload(Trainer.encounters))
+        .filter(Trainer.name.ilike(f"%{query}%"))
+        .all()
+    )
 
     if not results:
         raise HTTPException(status_code=404, detail="Trainer not found")
@@ -48,7 +60,12 @@ def get_encounters(trainer_id: int, db=Depends(get_db)):
     if cached:
         return cached
 
-    trainer = db.query(Trainer).filter_by(id=trainer_id).first()
+    trainer = (
+        db.query(Trainer)
+        .options(joinedload(Trainer.encounters))
+        .filter_by(id=trainer_id)
+        .first()
+    )
     if not trainer:
         raise HTTPException(status_code=404, detail="Trainer not found")
 
@@ -116,7 +133,11 @@ def get_encounter(encounter_id: int, db=Depends(get_db)):
 
 @app.get("/location")
 def search_by_location(name: str, db=Depends(get_db)):
-    cache_key = f"location:search:{name.lower()}"
+    query = normalize_query(name)
+    if not query:
+        raise HTTPException(status_code=400, detail="Location name is required")
+
+    cache_key = f"location:search:{query}"
     cached = get_cache(cache_key)
     if cached:
         return cached
@@ -124,7 +145,7 @@ def search_by_location(name: str, db=Depends(get_db)):
     results = db.query(TrainerEncounter).options(
         joinedload(TrainerEncounter.trainer)
     ).filter(
-        TrainerEncounter.location.ilike(f"%{name}%")
+        TrainerEncounter.location.ilike(f"%{query}%")
     ).all()
 
     if not results:
@@ -148,13 +169,17 @@ def search_by_location(name: str, db=Depends(get_db)):
 
 @app.get("/pokemon/{name}")
 def get_pokemon(name: str, db=Depends(get_db)):
-    cache_key = f"pokemon:{name.lower()}"
+    query = normalize_query(name)
+    if not query:
+        raise HTTPException(status_code=400, detail="Pokemon name is required")
+
+    cache_key = f"pokemon:{query}"
     cached = get_cache(cache_key)
     if cached:
         return cached
 
     pokemon = db.query(Pokemon).filter(
-        Pokemon.name.ilike(f"%{name}%")
+        Pokemon.name.ilike(f"%{query}%")
     ).all()
 
     if not pokemon:
@@ -164,6 +189,11 @@ def get_pokemon(name: str, db=Depends(get_db)):
         {
             "id": p.id,
             "name": p.name,
+            "dex_number": p.dex_number,
+            "type1": p.type1,
+            "type2": p.type2,
+            "ability": p.ability,
+            "hidden_ability": p.hidden_ability,
             "stats": {
                 "hp": p.hp,
                 "attack": p.attack,

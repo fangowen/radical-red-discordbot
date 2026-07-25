@@ -23,6 +23,7 @@ A public Discord lookup bot for Pokemon Radical Red trainer data, hosted 24/7 on
 ## Project Layout
 
 ```text
+config.py                Environment-backed runtime settings
 api/main.py              FastAPI app and HTTP lookup endpoints
 bot/main.py              Discord bot, slash commands, and embed builders
 cache/redis.py           Redis cache helpers
@@ -36,6 +37,14 @@ data/parsed_encounters.json
                          Parsed trainer encounter dataset used by seed script
 requirements.txt         Python dependencies
 ```
+
+## Technical Decisions
+
+- Discord slash commands keep lookups fast for players already using Discord during runs.
+- FastAPI separates Discord presentation from data retrieval, so the same trainer data can serve the bot and any future web/client surface.
+- SQLAlchemy stores parsed sheet data in normalized tables instead of scraping the sheet during every command.
+- Redis is used as an optional cache for repeated lookups, which are common when multiple players ask for the same route or boss.
+- Select menus handle ambiguous searches without forcing users to memorize exact trainer names.
 
 ## Discord Commands
 
@@ -60,6 +69,16 @@ Example:
 
 ```text
 /route location:Route 22
+```
+
+### `/pokemon`
+
+Looks up Pokemon stat data.
+
+Example:
+
+```text
+/pokemon name:Mewtwo
 ```
 
 ## API Endpoints
@@ -118,6 +137,6 @@ The parser currently keeps the full trainer/location label as `trainer_name` and
 
 - API responses are cached for one hour by default.
 - Cache keys are based on endpoint and query values.
-- If Redis is unavailable, API requests that use cache helpers will fail.
+- If Redis is unavailable, API requests continue without cached responses.
 - There are no automated tests in the repository yet.
 - Generated Python bytecode directories are present in the working tree, but they are not required to run the project.
