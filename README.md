@@ -12,131 +12,120 @@ A public Discord lookup bot for Pokemon Radical Red trainer data, hosted 24/7 on
 
 ![Discord embed showing a Mewtwo stat lookup](docs/images/pokemon-stats.png)
 
-## What It Does
-
-- Search trainers by name with `/trainer`.
-- Search routes or locations with `/route`.
-- Disambiguate multiple matching trainers or encounters through Discord select menus.
-- Show teams with Pokemon level, nature, ability, item, moves, stats, level cap, battle effect, starter variant, and speed at level cap when available.
-- Search Pokemon stat data through the API-backed bot data.
-
-## Project Layout
-
-```text
-config.py                Environment-backed runtime settings
-api/main.py              FastAPI app and HTTP lookup endpoints
-bot/main.py              Discord bot, slash commands, and embed builders
-cache/redis.py           Redis cache helpers
-db/base.py               SQLAlchemy declarative base
-db/models.py             Pokemon, trainer, encounter, team, and move models
-db/session.py            Database engine/session setup
-scripts/init_db.py       Creates database tables
-scripts/parse_sheet.py   Fetches and parses Google Sheet tabs into JSON
-scripts/seed_db.py       Seeds parsed encounter JSON into the database
-data/parsed_encounters.json
-                         Parsed trainer encounter dataset used by seed script
-requirements.txt         Python dependencies
+## Why
+ 
+Radical Red's trainer and encounter data lives in community-maintained Google Sheets. They're comprehensive but slow to search, and players run Radical Red with Discord already open. This bot puts that data one slash command away, backed by a normalized database instead of a live sheet scrape.
+ 
+## Features
+ 
+- `/trainer` — search trainers by name or location text
+- `/route` — list every trainer encounter on a route or in a location
+- `/pokemon` — look up base stats
+- Select menus to disambiguate when a search matches multiple trainers or encounters
+- Team embeds showing level, nature, ability, item, moves, stats, level cap, battle effect, starter variant, and speed at level cap where available
+## Architecture
+ 
 ```
-
-## Technical Decisions
-
-- Discord slash commands keep lookups fast for players already using Discord during runs.
-- FastAPI separates Discord presentation from data retrieval, so the same trainer data can serve the bot and any future web/client surface.
-- SQLAlchemy stores parsed sheet data in normalized tables instead of scraping the sheet during every command.
-- Redis is used as an optional cache for repeated lookups, which are common when multiple players ask for the same route or boss.
-- Select menus handle ambiguous searches without forcing users to memorize exact trainer names.
-
-## Discord Commands
-
-### `/trainer`
-
-Looks up a trainer by trainer name or location text.
-
-Examples:
-
-```text
-/trainer name:Brock
-/trainer name:Route 22
+Google Sheets  →  parse_sheet.py  →  parsed_encounters.json  →  seed_db.py  →  PostgreSQL
+                                                                                    ↓
+                                                    Discord client  ←  FastAPI  ←  Redis cache
 ```
-
-If multiple trainers or encounters match, the bot shows a select menu.
-
-### `/route`
-
-Looks up all trainer encounters matching a route or location.
-
-Example:
-
-```text
-/route location:Route 22
+ 
+An offline ETL step parses the sheets into normalized tables. At runtime, FastAPI serves lookups from PostgreSQL with an optional Redis cache in front, and the Discord layer handles only command parsing and embed rendering.
+ 
+### Design decisions
+ 
+- **Separate API from bot.** FastAPI owns data retrieval so the same trainer data can back a future web client, and so the data layer can be exercised without a Discord connection.
+- **Parse ahead of time, not per command.** Scraping the sheet on every lookup would be slow and fragile. Parsing into normalized SQLAlchemy models moves that cost to a one-time seed step.
+- **Cache the hot path.** Multiple players tend to ask about the same route or boss within minutes. Responses are cached for one hour, keyed by endpoint and query. If Redis is unreachable, requests fall through to the database rather than failing.
+- **Select menus over exact-match search.** Players rarely remember exact trainer names, so ambiguous queries return a picker instead of an error.
+## Project layout
+ 
 ```
-
-### `/pokemon`
-
-Looks up Pokemon stat data.
-
-Example:
-
-```text
-/pokemon name:Mewtwo
+config.py                  Environment-backed runtime settings
+api/main.py                FastAPI app and HTTP lookup endpoints
+bot/main.py                Discord bot, slash commands, embed builders
+cache/redis.py             Redis cache helpers
+db/base.py                 SQLAlchemy declarative base
+db/models.py               Pokémon, trainer, encounter, team, and move models
+db/session.py              Database engine and session setup
+scripts/init_db.py         Creates database tables
+scripts/parse_sheet.py     Fetches and parses Google Sheet tabs into JSON
+scripts/seed_db.py         Seeds parsed encounter JSON into the database
+data/parsed_encounters.json  Parsed trainer encounter dataset
+requirements.txt           Python dependencies
 ```
-
-## API Endpoints
-
-### `GET /trainer?name=...`
-
-Searches trainers by partial name.
-
-Returns trainer IDs, names, classes, and encounter counts.
-
-### `GET /trainer/{trainer_id}/encounters`
-
-Returns all encounters for one trainer.
-
-### `GET /encounter/{encounter_id}`
-
-Returns full encounter details, including the team and each Pokemon's moves and stats.
-
-### `GET /location?name=...`
-
-Searches encounters by partial location text.
-
-### `GET /pokemon/{name}`
-
-Searches Pokemon by partial name and returns base stats stored in the database.
-
-## Refreshing Parsed Data
-
-The parser in `scripts/parse_sheet.py` fetches CSV exports from the configured Google Sheet tabs and writes:
-
-```text
-data/parsed_encounters.json
-```
-
-Run it with:
-
+ 
+## Setup
+ 
+**Requirements:** Python 3.10+, PostgreSQL, Redis (optional), and a Discord bot token.
+ 
 ```bash
-python scripts/parse_sheet.py
+git clone https://github.com/fangowen/radical-red-discordbot.git
+cd radical-red-discordbot
+ 
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
 ```
-
-Then reseed the database:
-
+ 
+Create a `.env` file in the project root:
+ 
+```
+DISCORD_TOKEN=your_bot_token
+DATABASE_URL=postgresql://user:password@localhost:5432/radical_red
+REDIS_URL=redis://localhost:6379
+API_BASE_URL=http://localhost:8000
+```
+ 
+Initialize and seed the database:
+ 
 ```bash
+python scripts/init_db.py
 python scripts/seed_db.py
 ```
-
-The parser currently keeps the full trainer/location label as `trainer_name` and `location`, which matches how the API and bot search today.
-
-## Data Notes
-
-- `data/parsed_encounters.json` is the main structured dataset used by the seed script.
-- `data/trainers.json`, `data/rivals.csv`, and `data/rivals_sample.csv` are auxiliary/source data files.
-- `data/main.csv` currently appears to contain an HTML error response from Google rather than usable CSV trainer data.
-
-## Development Notes
-
-- API responses are cached for one hour by default.
-- Cache keys are based on endpoint and query values.
-- If Redis is unavailable, API requests continue without cached responses.
-- There are no automated tests in the repository yet.
-- Generated Python bytecode directories are present in the working tree, but they are not required to run the project.
+ 
+Run the API and the bot in separate terminals:
+ 
+```bash
+uvicorn api.main:app --reload
+python bot/main.py
+```
+ 
+Invite the bot to a server with the `bot` and `applications.commands` scopes.
+ 
+## Commands
+ 
+| Command | Description | Example |
+|---|---|---|
+| `/trainer name:<query>` | Look up a trainer by name or location | `/trainer name:Brock` |
+| `/route location:<query>` | List encounters on a route | `/route location:Route 22` |
+| `/pokemon name:<query>` | Look up base stats | `/pokemon name:Mewtwo` |
+ 
+## API endpoints
+ 
+| Endpoint | Returns |
+|---|---|
+| `GET /trainer?name=` | Trainer IDs, names, classes, and encounter counts for a partial name match |
+| `GET /trainer/{trainer_id}/encounters` | All encounters for one trainer |
+| `GET /encounter/{encounter_id}` | Full encounter details, including team, moves, and stats |
+| `GET /location?name=` | Encounters matching partial location text |
+| `GET /pokemon/{name}` | Base stats for a partial name match |
+ 
+## Refreshing the dataset
+ 
+When the upstream community sheets change:
+ 
+```bash
+python scripts/parse_sheet.py    # rewrites data/parsed_encounters.json
+python scripts/seed_db.py        # reseeds the database
+```
+ 
+The parser preserves the full trainer and location labels from the source sheets, which is what the API's partial-match search expects.
+ 
+## Roadmap
+ 
+- Automated tests for the API endpoints and sheet parser
+- Web client over the existing API
+- Incremental reseeding instead of full rebuilds
+ 
