@@ -60,13 +60,15 @@ class EncounterSelect(discord.ui.Select):
         super().__init__(placeholder="Choose an encounter...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        # Acknowledge within Discord's 3-second window before calling the API
+        await interaction.response.defer()
         encounter_id = self.values[0]
         data = await fetch(f"/encounter/{encounter_id}")
         if not data:
-            await interaction.response.send_message("Encounter not found.", ephemeral=True)
+            await interaction.followup.send("Encounter not found.", ephemeral=True)
             return
         embed = build_encounter_embed(data)
-        await interaction.response.edit_message(content=None, embed=embed, view=None)
+        await interaction.edit_original_response(content=None, embed=embed, view=None)
 
 class EncounterView(discord.ui.View):
     def __init__(self, encounters):
@@ -86,20 +88,25 @@ class TrainerSelect(discord.ui.Select):
         super().__init__(placeholder="Choose a trainer...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        # Acknowledge within Discord's 3-second window before calling the API
+        await interaction.response.defer()
         trainer_id = self.values[0]
         encounters = await fetch(f"/trainer/{trainer_id}/encounters")
 
         if not encounters:
-            await interaction.response.send_message("No encounters found.", ephemeral=True)
+            await interaction.followup.send("No encounters found.", ephemeral=True)
             return
 
         if len(encounters) == 1:
             data = await fetch(f"/encounter/{encounters[0]['id']}")
+            if not data:
+                await interaction.followup.send("Encounter not found.", ephemeral=True)
+                return
             embed = build_encounter_embed(data)
-            await interaction.response.edit_message(content=None, embed=embed, view=None)
+            await interaction.edit_original_response(content=None, embed=embed, view=None)
         else:
             view = EncounterView(encounters)
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content="Multiple encounters found — which one?",
                 embed=None,
                 view=view
@@ -180,85 +187,92 @@ def build_pokemon_embed(data):
 
     return embed
 
+async def send_encounter(interaction: discord.Interaction, encounter_id):
+    data = await fetch(f"/encounter/{encounter_id}")
+    if not data:
+        await interaction.followup.send("Encounter not found.")
+        return
+    await interaction.followup.send(embed=build_encounter_embed(data))
+
+
+# Discord fails any slash command that isn't acknowledged within 3 seconds, and a lookup
+# can chain up to three API calls. Each command defers first (users see "thinking..."),
+# which allows up to 15 minutes, then replies with a followup message.
+
 @bot.tree.command(name="trainer", description="Look up a trainer's team")
 @app_commands.describe(name="Trainer name or location")
 async def trainer(interaction: discord.Interaction, name: str):
+    await interaction.response.defer(thinking=True)
     results = await fetch("/trainer", params={"name": name})
 
     if not results:
         results = await fetch("/location", params={"name": name})
         if not results:
-            await interaction.response.send_message(f"No trainer found for `{name}`.", ephemeral=True)
+            await interaction.followup.send(f"No trainer found for `{name}`.")
             return
         if len(results) == 1:
-            data = await fetch(f"/encounter/{results[0]['encounter_id']}")
-            embed = build_encounter_embed(data)
-            await interaction.response.send_message(embed=embed)
+            await send_encounter(interaction, results[0]["encounter_id"])
         else:
-            view = EncounterView(results)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"Found {len(results)} encounters for `{name}` — pick one:",
-                view=view
+                view=EncounterView(results)
             )
         return
 
     if len(results) == 1:
         encounters = await fetch(f"/trainer/{results[0]['id']}/encounters")
+        if not encounters:
+            await interaction.followup.send(f"No encounters found for **{results[0]['name']}**.")
+            return
         if len(encounters) == 1:
-            data = await fetch(f"/encounter/{encounters[0]['id']}")
-            embed = build_encounter_embed(data)
-            await interaction.response.send_message(embed=embed)
+            await send_encounter(interaction, encounters[0]["id"])
         else:
-            view = EncounterView(encounters)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"Multiple encounters for **{results[0]['name']}** — pick one:",
-                view=view
+                view=EncounterView(encounters)
             )
     else:
-        view = TrainerView(results)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Found {len(results)} trainers matching `{name}` — pick one:",
-            view=view
+            view=TrainerView(results)
         )
 
 @bot.tree.command(name="route", description="Look up all trainers on a route or location")
 @app_commands.describe(location="Route or location name")
 async def route(interaction: discord.Interaction, location: str):
+    await interaction.response.defer(thinking=True)
     results = await fetch("/location", params={"name": location})
 
     if not results:
-        await interaction.response.send_message(f"No trainers found at `{location}`.", ephemeral=True)
+        await interaction.followup.send(f"No trainers found at `{location}`.")
         return
 
     if len(results) == 1:
-        data = await fetch(f"/encounter/{results[0]['encounter_id']}")
-        embed = build_encounter_embed(data)
-        await interaction.response.send_message(embed=embed)
+        await send_encounter(interaction, results[0]["encounter_id"])
     else:
-        view = EncounterView(results)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Found {len(results)} encounters at `{location}` — pick one:",
-            view=view
+            view=EncounterView(results)
         )
 
 
 @bot.tree.command(name="pokemon", description="Look up a Pokemon's stats")
 @app_commands.describe(name="Pokemon name")
 async def pokemon(interaction: discord.Interaction, name: str):
+    await interaction.response.defer(thinking=True)
     results = await fetch(f"/pokemon/{quote(name.strip(), safe='')}")
 
     if not results:
-        await interaction.response.send_message(f"No Pokemon found for `{name}`.", ephemeral=True)
+        await interaction.followup.send(f"No Pokemon found for `{name}`.")
         return
 
     if len(results) == 1:
-        await interaction.response.send_message(embed=build_pokemon_embed(results[0]))
+        await interaction.followup.send(embed=build_pokemon_embed(results[0]))
         return
 
     matches = "\n".join(f"- {p['name']}" for p in results[:10])
-    await interaction.response.send_message(
-        f"Found multiple Pokemon matching `{name}`:\n{matches}\nTry a more specific name.",
-        ephemeral=True
+    await interaction.followup.send(
+        f"Found multiple Pokemon matching `{name}`:\n{matches}\nTry a more specific name."
     )
 
 

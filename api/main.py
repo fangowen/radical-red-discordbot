@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 from db.session import SessionLocal
 from db.models import Pokemon, Trainer, TrainerEncounter, TrainerPokemon
@@ -178,9 +179,13 @@ def get_pokemon(name: str, db=Depends(get_db)):
     if cached:
         return cached
 
-    pokemon = db.query(Pokemon).filter(
-        Pokemon.name.ilike(f"%{query}%")
-    ).all()
+    # An exact name wins outright, so "mew" returns Mew instead of Mew and Mewtwo.
+    # Only fall back to substring matching when there's no exact match.
+    pokemon = db.query(Pokemon).filter(func.lower(Pokemon.name) == query).all()
+    if not pokemon:
+        pokemon = db.query(Pokemon).filter(
+            Pokemon.name.ilike(f"%{query}%")
+        ).all()
 
     if not pokemon:
         raise HTTPException(status_code=404, detail="Pokemon not found")
